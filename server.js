@@ -3,6 +3,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs'); // Added to read the schema file
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
@@ -14,13 +15,12 @@ const PORT = process.env.PORT || 5000;
 // 1. SECURITY & UTILITY MIDDLEWARE
 // ==========================================
 app.use(helmet({
-    contentSecurityPolicy: false, // Compatibility for Map iframes and external icons
+    contentSecurityPolicy: false, 
 }));
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate Limiting Protection (Protects your server from attacks)
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 300,
@@ -37,9 +37,20 @@ const pool = new Pool({
 });
 app.set('db', pool);
 
-// Global Auto-Seeding (Creates your first Admin account automatically)
-async function initializeDatabaseAdmin() {
+// Automatic Database Migration & Admin Seeding
+async function initializeDatabase() {
     try {
+        // 1. Automatically run schema.sql to create tables if they don't exist
+        const sqlPath = path.join(__dirname, 'schema.sql');
+        if (fs.existsSync(sqlPath)) {
+            const sql = fs.readFileSync(sqlPath, 'utf8');
+            await pool.query(sql);
+            console.log('Database tables verified/created successfully.');
+        } else {
+            console.log('schema.sql file not found. Skipping auto-migration.');
+        }
+
+        // 2. Auto-Seed Admin Account if database is empty
         const checkUser = await pool.query('SELECT * FROM users LIMIT 1');
         if (checkUser.rows.length === 0) {
             const defaultEmail = 'admin@example.com';
@@ -58,27 +69,20 @@ async function initializeDatabaseAdmin() {
             console.log('=====================================================');
         }
     } catch (err) {
-        console.error('Database Initial Check Error:', err.message);
+        console.error('Critical database execution initialization error:', err.message);
     }
 }
-initializeDatabaseAdmin();
+initializeDatabase();
 
 // ==========================================
-// 3. STATIC FILES & STORAGE (Order matters)
+// 3. STATIC FILES & STORAGE 
 // ==========================================
-
-// Route for your Admin Dashboard (/admin will look into public/admin/index.html)
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
-
-// General route for uploads/images
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
-
-// General route for the main website folder
 app.use(express.static(path.join(__dirname, 'public')));
 
-
 // ==========================================
-// 4. API ROUTING (Mapping to your /controllers folder)
+// 4. API ROUTING
 // ==========================================
 app.use('/api/auth', require('./controllers/authController'));
 app.use('/api/content', require('./controllers/contentController'));
@@ -88,15 +92,12 @@ app.use('/api/messages', require('./controllers/messageController'));
 app.use('/api/media', require('./controllers/mediaController'));
 
 // ==========================================
-// 5. THE FALLBACK (Served if no route matches)
+// 5. THE FALLBACK
 // ==========================================
-
-// Access the dashboard via browser: yoursite.com/dashboard (optional shortcut)
 app.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, 'public/admin/index.html'));
 });
 
-// All other traffic goes to the main Landing Page
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public/index.html'));
 });
